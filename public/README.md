@@ -13,4 +13,4 @@ Example projects that explain basic reVISit functionality are:
 Folders that don't contain an experiment are: 
 
 * `assets` which contains logos, etc. 
-* [configs](configs) which contains a reference of the reVISit config
+* [configs](configs) which contains a reference of the reVISit config.
