@@ -10,7 +10,7 @@
       "Your Organization"
     ],
     "date": "2025-09-21",
-    "description": "The Effects of Visual Mark Arrangement in Waffle Charts on the Perception of Containment"
+    "description": "The Effects of Visual Mark Arrangement in Waffle Charts on the Perception of Containment "
   },
   "uiConfig": {
     "logoPath": "waffle-chart-study/assets/logo.png",
@@ -1904,3 +1904,4 @@
     ]
   }
 }
+
