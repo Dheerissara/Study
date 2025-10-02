@@ -16,7 +16,7 @@
     "logoPath": "waffle-chart-study/assets/logo.png",
     "contactEmail": "6780188726@cbs.chula.ac.th",
     "withProgressBar": true,
-    "withSidebar": true
+    "sidebar": true
   },
   "components": {
     "intro": {
@@ -237,3 +237,4 @@
     ]
   }
 }
+
