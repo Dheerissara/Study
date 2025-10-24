@@ -126,20 +126,64 @@
     const res=[]; for(let r=9;r>=0&&res.length<n;r--) for(let c=0;c<side&&res.length<n;c++) res.push(r*10+c); return res;
   }
   function buildPlan(){
-    const pairs={
-      "Low–Low": [[4,9],[4,16],[4,25],[9,16],[9,25],[16,25]],
-      "Low–High": [[4,36],[4,49],[4,64],[4,81],[9,36],[9,49],[9,64],[9,81],[16,36],[16,49],[16,64],[16,81],[25,36],[25,49],[25,64],[25,81]],
-      "High–High": [[36,49],[36,64],[36,81],[49,64],[49,81],[64,81]]
-    };
-    const chosen=Object.entries(pairs).map(([g,a])=>({group:g,pair:pick(a)}));
-    const styles=[
-      {layout:"horizontal", colorDir:"light→dark"},
-      {layout:"horizontal", colorDir:"dark→light"},
-      {layout:"square",     colorDir:"light→dark"},
-      {layout:"square",     colorDir:"dark→light"}
-    ];
-    const trials=[]; for(const st of styles) for(const c of chosen) trials.push({...st,...c}); return shuffled(trials);
+  const pairs = {
+    LowLow: [[4,9],[4,16],[4,25],[9,16],[9,25],[16,25]],
+    LowHigh: [
+      [4,36],[4,49],[4,64],[4,81],
+      [9,36],[9,49],[9,64],[9,81],
+      [16,36],[16,49],[16,64],[16,81],
+      [25,36],[25,49],[25,64],[25,81]
+    ],
+    HighHigh: [[36,49],[36,64],[36,81],[49,64],[49,81],[64,81]]
+  };
+  
+  function pick(a){return a[Math.floor(Math.random()*a.length)];}
+  const chosen = Object.entries(pairs).map(([group, arr]) => 
+    ({ group, pair: pick(arr) })
+  );
+
+  const styles = [
+    { layout: "horizontal", colorDir: "lightdark" },
+    { layout: "horizontal", colorDir: "darklight" },
+    { layout: "square", colorDir: "lightdark" },
+    { layout: "square", colorDir: "darklight" }
+  ];
+
+  // Latin Square หมุนลำดับ
+  const latinSquare = [
+    [0,1,2,3],
+    [1,2,3,0],
+    [2,3,0,1],
+    [3,0,1,2]
+  ];
+  const latinIdx = Math.floor(Math.random() * latinSquare.length);
+
+  let trials = [];
+  for (let g = 0; g < chosen.length; g++) {
+    const order = latinSquare[(latinIdx+g)%latinSquare.length];
+    for (let i = 0; i < 4; i++) {
+      const style = styles[order[i]];
+      trials.push({
+        ...style,
+        ...chosen[g]
+      });
+    }
   }
+  // กัน pair ซ้ำติดกัน
+  function hasAdjacentRepeat(arr){
+    for(let i=0;i<arr.length-1;i++)
+      if(JSON.stringify(arr[i].pair)===JSON.stringify(arr[i+1].pair)) return true;
+    return false;
+  }
+  let max=1000;
+  while(hasAdjacentRepeat(trials)&&max--){
+    for(let i=trials.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [trials[i],trials[j]] = [trials[j],trials[i]];
+    }
+  }
+  return trials;
+}
 
   let plan=sessionStorage.getItem(PLAN_KEY);
   if(!plan){ plan=JSON.stringify(buildPlan()); sessionStorage.setItem(PLAN_KEY,plan); }
