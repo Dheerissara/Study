@@ -1,0 +1,16 @@
+/* 🔒 ล็อกเฉพาะรายการทางขวา (intro–t12) และปุ่มสลับแท็บ */
+.mantine-AppShell-aside .mantine-NavLink-root,
+.mantine-AppShell-aside .mantine-NavLink-root *,
+.mantine-AppShell-aside .mantine-Tabs-tab,
+.mantine-AppShell-aside .mantine-Tabs-tab * {
+  pointer-events: none !important;
+  user-select: none !important;
+  cursor: not-allowed !important;
+  opacity: 0.98;
+}
+
+/* ✅ อนุญาตให้ปุ่มในพาเนลขวาทำงานได้ (รวม Next participant) */
+.mantine-AppShell-aside button {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
