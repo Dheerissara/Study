@@ -33,7 +33,7 @@
   :root{ --light:#cfe5ff; --dark:#0a66a1; --empty:#eee; }
   body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
   .wrap{padding:16px;}
-  .chartWrap{ position:relative; width:max-content; --label-gutter:120px; padding-left:var(--label-gutter); }
+  .chartWrap{ position:relative; width:max-content; --label-gutter:120px; padding-left:var(--label-gutter); max-width:100%; overflow:auto; }
   .labelLayer{position:absolute; inset:0; pointer-events:none}
   .lbl{ position:absolute; transform:translateX(-100%) translateY(-50%); display:flex; gap:8px; white-space:nowrap; font-size:16px; color:#222; font-weight:600; }
   .chip{width:14px; height:14px; border-radius:3px; display:inline-block}
@@ -66,7 +66,6 @@
       ) || el;
       // Guard again: skip if the root contains a role="button"
       if(root.querySelector('button')){
-        // still can hide the element itself if it is a response row
         if (el !== root) { el.style.setProperty('display','none','important'); el.setAttribute('aria-hidden','true'); }
         return;
       }
@@ -115,6 +114,9 @@
 
   // ------- plan & indices (same behaviour as your working version) -------
   const PLAN_KEY='wafflePlan_v7';
+  const DECK_KEY='waffleDeck_v1'; // ⟵ ใหม่: เก็บกองไพ่ที่เหลืออยู่ (persist ข้ามรอบ)
+  if (qs.get('resetDeck') === '1') { try{ localStorage.removeItem(DECK_KEY); }catch(e){} }
+
   const pick=a=>a[Math.floor(Math.random()*a.length)];
   const shuffled=a=>a.map(v=>[Math.random(),v]).sort((x,y)=>x[0]-y[0]).map(x=>x[1]);
 
@@ -125,68 +127,129 @@
     const side=Math.max(1,Math.min(10,Math.ceil(Math.sqrt(n))));
     const res=[]; for(let r=9;r>=0&&res.length<n;r--) for(let c=0;c<side&&res.length<n;c++) res.push(r*10+c); return res;
   }
-  function buildPlan(){
-  const pairs = {
-    LowLow: [[4,9],[4,16],[4,25],[9,16],[9,25],[16,25]],
-    LowHigh: [
-      [4,36],[4,49],[4,64],[4,81],
-      [9,36],[9,49],[9,64],[9,81],
-      [16,36],[16,49],[16,64],[16,81],
-      [25,36],[25,49],[25,64],[25,81]
-    ],
-    HighHigh: [[36,49],[36,64],[36,81],[49,64],[49,81],[64,81]]
-  };
-  
-  function pick(a){return a[Math.floor(Math.random()*a.length)];}
-  const chosen = Object.entries(pairs).map(([group, arr]) => 
-    ({ group, pair: pick(arr) })
-  );
 
-  const styles = [
-    { layout: "horizontal", colorDir: "lightdark" },
-    { layout: "horizontal", colorDir: "darklight" },
-    { layout: "square", colorDir: "lightdark" },
-    { layout: "square", colorDir: "darklight" }
-  ];
-
-  // Latin Square หมุนลำดับ
-  const latinSquare = [
-    [0,1,2,3],
-    [1,2,3,0],
-    [2,3,0,1],
-    [3,0,1,2]
-  ];
-  const latinIdx = Math.floor(Math.random() * latinSquare.length);
-
-  let trials = [];
-  for (let g = 0; g < chosen.length; g++) {
-    const order = latinSquare[(latinIdx+g)%latinSquare.length];
-    for (let i = 0; i < 4; i++) {
-      const style = styles[order[i]];
-      trials.push({
-        ...style,
-        ...chosen[g]
+  // ===== ฟังก์ชันล้างช่องกรอก =====
+  function clearOldResponses() {
+    try {
+      const pd = window.parent?.document; if (!pd) return;
+      const inputs = pd.querySelectorAll("input, textarea");
+      inputs.forEach(inp => {
+        if (inp.type !== "button") {
+          inp.value = "";
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+          inp.dispatchEvent(new Event("change", { bubbles: true }));
+        }
       });
+      console.debug("Cleared old responses before starting new plan");
+    } catch (err) {
+      console.warn("Failed to clear old responses", err);
     }
   }
-  // กัน pair ซ้ำติดกัน
-  function hasAdjacentRepeat(arr){
-    for(let i=0;i<arr.length-1;i++)
-      if(JSON.stringify(arr[i].pair)===JSON.stringify(arr[i+1].pair)) return true;
-    return false;
-  }
-  let max=1000;
-  while(hasAdjacentRepeat(trials)&&max--){
-    for(let i=trials.length-1;i>0;i--){
-      const j = Math.floor(Math.random()*(i+1));
-      [trials[i],trials[j]] = [trials[j],trials[i]];
+
+  function buildPlan(){
+
+    // --- กำหนดชุดข้อมูลเริ่มต้นสำหรับใช้รีสต็อกเมื่อหมด
+    const originalPairs = {
+      LowLow: [[4,9],[4,16],[4,25],[9,16],[9,25],[16,25]],
+      LowHigh: [
+        [4,36],[4,49],[4,64],[4,81],
+        [9,36],[9,49],[9,64],[9,81],
+        [16,36],[16,49],[16,64],[16,81],
+        [25,36],[25,49],[25,64],[25,81]
+      ],
+      HighHigh: [[36,49],[36,64],[36,81],[49,64],[49,81],[64,81]]
+    };
+
+    // --- โหลดกองไพ่จาก localStorage; ถ้าไม่มีให้เริ่มจาก original
+    let pairs = (()=>{
+      try{
+        const saved = localStorage.getItem(DECK_KEY);
+        if (saved) return JSON.parse(saved);
+      }catch(e){}
+      return JSON.parse(JSON.stringify(originalPairs));
+    })();
+
+    function saveDeck(){
+      try{ localStorage.setItem(DECK_KEY, JSON.stringify(pairs)); }catch(e){}
     }
+
+    // --- สุ่มแบบไม่ซ้ำ และบันทึกกองทุกครั้ง; รีสต็อกเฉพาะกลุ่มที่หมด
+    function pick(groupName) {
+      if (pairs[groupName].length === 0) {
+        pairs[groupName] = JSON.parse(JSON.stringify(originalPairs[groupName]));
+        console.debug(`Reset deck for ${groupName}`);
+      }
+      const idx = Math.floor(Math.random() * pairs[groupName].length);
+      const chosen = pairs[groupName].splice(idx, 1)[0];
+      saveDeck(); // สำคัญ: บันทึกกองหลังหยิบทุกครั้ง
+      return chosen;
+    }
+
+    // --- สุ่ม 1 คู่จากแต่ละกลุ่ม
+    const chosen = Object.keys(pairs).map(group => ({
+      group,
+      pair: pick(group)
+    }));
+
+    // --- รูปแบบจอ: layout × color direction  (แก้ให้ใช้ค่าเดียวกับตอน render)
+    const styles = [
+      { layout: "horizontal", colorDir: "light→dark" },
+      { layout: "horizontal", colorDir: "dark→light" },
+      { layout: "square",     colorDir: "light→dark" },
+      { layout: "square",     colorDir: "dark→light" }
+    ];
+
+    // --- ตาราง Latin Square เดิม (ใช้จัดลำดับ style ภายในกลุ่ม)
+    const latinSquare = [
+      [0,1,2,3],
+      [1,2,3,0],
+      [2,3,0,1],
+      [3,0,1,2]
+    ];
+    const latinIdx = Math.floor(Math.random() * latinSquare.length);
+
+    // --- สร้าง trials
+    let trials = [];
+    for (let g = 0; g < chosen.length; g++) {
+      const order = latinSquare[(latinIdx + g) % latinSquare.length];
+      for (let i = 0; i < 4; i++) {
+        const style = styles[order[i]];
+        trials.push({
+          ...style,
+          ...chosen[g]
+        });
+      }
+    }
+
+    // --- กัน pair ซ้ำติดกันแบบสุ่มสลับ (ถ้าเจอ)
+    function hasAdjacentRepeat(arr) {
+      for (let i = 0; i < arr.length - 1; i++) {
+        if (JSON.stringify(arr[i].pair) === JSON.stringify(arr[i + 1].pair))
+          return true;
+      }
+      return false;
+    }
+
+    let max = 1000;
+    while (hasAdjacentRepeat(trials) && max--) {
+      for (let i = trials.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [trials[i], trials[j]] = [trials[j], trials[i]];
+      }
+    }
+
+    if (max === 0) console.warn("Reached shuffle limit; some adjacent duplicates may remain");
+
+    return trials;
   }
-  return trials;
-}
 
   let plan=sessionStorage.getItem(PLAN_KEY);
-  if(!plan){ plan=JSON.stringify(buildPlan()); sessionStorage.setItem(PLAN_KEY,plan); }
+  if(!plan){
+    // เรียกเคลียร์คำตอบเก่าเฉพาะตอนเริ่มชุดใหม่ (ไม่กระทบการบันทึกคำตอบของรอบที่กำลังทำ)
+    if(idx === 0) clearOldResponses();
+    plan=JSON.stringify(buildPlan());
+    sessionStorage.setItem(PLAN_KEY,plan);
+  }
   plan=JSON.parse(plan);
   const trial=plan[idx]||plan[0];
 
@@ -195,18 +258,24 @@
   if(trial.layout==='horizontal'){ Aidx=indicesHorizontalLeft(trial.pair[0]); Bidx=indicesHorizontalLeft(trial.pair[1]); }
   else { Aidx=indicesSquare(trial.pair[0]); Bidx=indicesSquare(trial.pair[1]); }
 
-  // ------- render -------
-  const holder=document.getElementById('chart'); holder.innerHTML='';
-  const grid=document.createElement('div'); grid.className='grid';
-  const cells=Array.from({length:100},()=>{const d=document.createElement('div'); d.className='cell'; return d;});
-  const order=(Aidx.length>=Bidx.length)
-    ?[{name:'A',idx:Aidx,role:colorRole.A},{name:'B',idx:Bidx,role:colorRole.B}]
-    :[{name:'B',idx:Bidx,role:colorRole.B},{name:'A',idx:Aidx,role:colorRole.A}];
-  order[0].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[0].role; cells[i].appendChild(d);});
-  order[1].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[1].role; cells[i].appendChild(d);});
-  cells.forEach(c=>grid.appendChild(c)); holder.appendChild(grid);
+  // ------- สร้างกริดครั้งเดียว (render) -------
+  (function buildGrid(){
+    const holder=document.getElementById('chart'); holder.innerHTML='';
+    const grid=document.createElement('div'); grid.className='grid';
+    const cells=Array.from({length:100},()=>{const d=document.createElement('div'); d.className='cell'; return d;});
+    const order=(Aidx.length>=Bidx.length)
+      ?[{name:'A',idx:Aidx,role:(trial.colorDir==='light→dark')?'light':'dark'},
+        {name:'B',idx:Bidx,role:(trial.colorDir==='light→dark')?'dark':'light'}]
+      :[{name:'B',idx:Bidx,role:(trial.colorDir==='light→dark')?'dark':'light'},
+        {name:'A',idx:Aidx,role:(trial.colorDir==='light→dark')?'light':'dark'}];
+    order[0].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[0].role; cells[i].appendChild(d);});
+    order[1].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[1].role; cells[i].appendChild(d);});
+    cells.forEach(c=>grid.appendChild(c)); holder.appendChild(grid);
+    const labelLayer=document.createElement('div'); labelLayer.className='labelLayer'; holder.appendChild(labelLayer);
+  })();
 
-  const labelLayer=document.createElement('div'); labelLayer.className='labelLayer'; holder.appendChild(labelLayer);
+  // ------- ตำแหน่ง label + ส่งคำตอบ (คง logic เดิม) -------
+  const labelLayer=document.createElement('div');
 
   function resolveOverlap(aLbl,bLbl,minGap=22){
     if(!aLbl||!bLbl) return;
@@ -294,7 +363,7 @@
     const prefix=getIdPrefixFromUrl();
     ensureAnswersHidden(prefix, Aidx.length, Bidx.length);
 
-    // postAnswers
+    // postAnswers (โครงสร้าง payload และการส่งคำตอบเหมือนเดิม)
     (function(){
       function getR(){ try{ return (window.parent && window.parent.Revisit) || window.Revisit || null; }catch(e){ return null; } }
       function fillIfPresent(pd, path, val){
@@ -336,21 +405,6 @@
       })();
     })();
   }
-
-  (function buildGrid(){
-    const holder=document.getElementById('chart'); holder.innerHTML='';
-    const grid=document.createElement('div'); grid.className='grid';
-    const cells=Array.from({length:100},()=>{const d=document.createElement('div'); d.className='cell'; return d;});
-    const order=(Aidx.length>=Bidx.length)
-      ?[{name:'A',idx:Aidx,role:(trial.colorDir==='light→dark')?'light':'dark'},
-        {name:'B',idx:Bidx,role:(trial.colorDir==='light→dark')?'dark':'light'}]
-      :[{name:'B',idx:Bidx,role:(trial.colorDir==='light→dark')?'dark':'light'},
-        {name:'A',idx:Aidx,role:(trial.colorDir==='light→dark')?'light':'dark'}];
-    order[0].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[0].role; cells[i].appendChild(d);});
-    order[1].idx.forEach(i=>{const d=document.createElement('div'); d.className=order[1].role; cells[i].appendChild(d);});
-    cells.forEach(c=>grid.appendChild(c)); holder.appendChild(grid);
-    const labelLayer=document.createElement('div'); labelLayer.className='labelLayer'; holder.appendChild(labelLayer);
-  })();
 
   requestAnimationFrame(()=>{ setTimeout(place,0); });
   window.addEventListener('resize',()=>{ place(); });
