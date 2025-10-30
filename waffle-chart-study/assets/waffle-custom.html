@@ -38,7 +38,7 @@
   .lbl{ position:absolute; transform:translateX(-100%) translateY(-50%); display:flex; gap:8px; white-space:nowrap; font-size:16px; color:#222; font-weight:600; }
   .chip{width:14px; height:14px; border-radius:3px; display:inline-block}
   .chip.light{background:var(--light)} .chip.dark{background:var(--dark)}
-  .grid{display:grid; grid-template-columns:repeat(10,26px); grid-auto-rows:26px; gap:4px; width:max-content}
+  .grid{display:grid; grid-template-columns:repeat(10,26px); grid-auto-rows:26px; gap:4px; width:max-content; overflow: visible}
   .cell{width:26px; height:26px; border-radius:5px; background:var(--empty); position:relative; overflow:hidden}
   .cell .light{position:absolute; inset:0; background:var(--light)}
   .cell .dark {position:absolute; inset:0; background:var(--dark)}
@@ -57,14 +57,12 @@
 
     function hideRoot(el){
       if(!el) return;
-      // Don't ever hide buttons (like Next)
       if(el.tagName === 'BUTTON') return;
       const root = el.closest(
         '[class*="mantine-TextInput-root"],[class*="mantine-Textarea-root"],' +
         '[class*="mantine-NumberInput-root"],[class*="mantine-Input-root"],' +
         '[class*="mantine-InputWrapper-root"],[data-path]'
       ) || el;
-      // Guard again: skip if the root contains a role="button"
       if(root.querySelector('button')){
         if (el !== root) { el.style.setProperty('display','none','important'); el.setAttribute('aria-hidden','true'); }
         return;
@@ -74,10 +72,7 @@
     }
 
     function hideNow(doc){
-      // 1) Hide by data-path tokens (inputs + wrappers)
       doc.querySelectorAll(sel).forEach(hideRoot);
-
-      // 2) Hide any text-only "(ระบบ) ..." blocks (both sidebar and main content)
       const textSelectors = 'div, p, span, label, dd, dt, li';
       doc.querySelectorAll(`aside ${textSelectors}, main ${textSelectors}, ${textSelectors}`).forEach(el => {
         const t = (el.textContent || '').trim();
@@ -96,7 +91,7 @@
       run();
       try{
         const mo = new MutationObserver(run);
-        mo.observe(doc.body, {childList:true, subtree:true}); // keep alive
+        mo.observe(doc.body, {childList:true, subtree:true});
       }catch(_){}
       doc.addEventListener('click', run, true);
       doc.addEventListener('visibilitychange', run);
@@ -114,7 +109,7 @@
 
   // ------- plan & indices (same behaviour as your working version) -------
   const PLAN_KEY='wafflePlan_v7';
-  const DECK_KEY='waffleDeck_v1'; // ⟵ ใหม่: เก็บกองไพ่ที่เหลืออยู่ (persist ข้ามรอบ)
+  const DECK_KEY='waffleDeck_v1'; // เก็บกองไพ่ที่เหลืออยู่ (persist ข้ามรอบ)
   if (qs.get('resetDeck') === '1') { try{ localStorage.removeItem(DECK_KEY); }catch(e){} }
 
   const pick=a=>a[Math.floor(Math.random()*a.length)];
@@ -146,9 +141,67 @@
     }
   }
 
+  /* ──────────────────────────────────────────────────────────────
+     Utilities: random without replacement + adjacency avoidance + Latin(4)
+     ────────────────────────────────────────────────────────────── */
+  function shuffleInPlace(arr){
+    for(let i=arr.length-1;i>0;i--){
+      const j=(Math.random()*(i+1))|0;
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
+    return arr;
+  }
+  function sampleWithoutReplacement(arr,k){
+    if(k>arr.length) throw new Error("sampleWithoutReplacement: k > length");
+    const copy=arr.slice(); shuffleInPlace(copy); return copy.slice(0,k);
+  }
+  function shareNumber(pairA,pairB){
+    return pairA[0]===pairB[0]||pairA[0]===pairB[1]||pairA[1]===pairB[0]||pairA[1]===pairB[1];
+  }
+  function reorderAvoidAdjacency(pairs,maxAttempts=200){
+    for(let attempt=0;attempt<maxAttempts;attempt++){
+      const pool=shuffleInPlace(pairs.slice());
+      const out=[pool.shift()];
+      while(pool.length){
+        const i=pool.findIndex(p=>!shareNumber(out[out.length-1],p));
+        if(i===-1){
+          let swapped=false;
+          for(let k=out.length-2;k>=Math.max(0,out.length-5);k--){
+            [out[k],out[out.length-1]]=[out[out.length-1],out[k]];
+            const j=pool.findIndex(p=>!shareNumber(out[out.length-1],p));
+            if(j!==-1){ out.push(pool.splice(j,1)[0]); swapped=true; break; }
+            [out[k],out[out.length-1]]=[out[out.length-1],out[k]];
+          }
+          if(!swapped) break;
+        }else{
+          out.push(pool.splice(i,1)[0]);
+        }
+      }
+      if(out.length===pairs.length) return out;
+    }
+    throw new Error("จัดเรียงเลี่ยงเลขติดกันไม่สำเร็จ");
+  }
+  function latinSquareOrder4(nTrials,conditions){
+    if(conditions.length!==4) throw new Error("ต้องมี 4 เงื่อนไข");
+    const base=[[0,1,2,3],[1,2,3,0],[2,3,0,1],[3,0,1,2]];
+    const out=[]; let row=0;
+    while(out.length<nTrials){
+      for(let c=0;c<4 && out.length<nTrials;c++){ out.push(conditions[ base[row][c] ]); }
+      row=(row+1)%4;
+    }
+    return out;
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     buildPlan(): เปลี่ยนเฉพาะ “การส่วมข้อมูล”
+       - สุ่ม 4 คู่/กลุ่ม แบบไม่คืน → รวม 12 คู่ (ไม่ซ้ำคู่)
+       - เรียงลำดับเลี่ยงเลขซ้ำติดกัน
+       - ครอบ Latin Square 4 รูปแบบบน 12 ตำแหน่ง
+     ส่วนอื่น ๆ ของไฟล์คงเดิมทั้งหมด
+     ────────────────────────────────────────────────────────────── */
   function buildPlan(){
 
-    // --- กำหนดชุดข้อมูลเริ่มต้นสำหรับใช้รีสต็อกเมื่อหมด
+    // ชุดข้อมูลเริ่มต้น (เหมือนเดิม)
     const originalPairs = {
       LowLow: [[4,9],[4,16],[4,25],[9,16],[9,25],[16,25]],
       LowHigh: [
@@ -160,93 +213,67 @@
       HighHigh: [[36,49],[36,64],[36,81],[49,64],[49,81],[64,81]]
     };
 
-    // --- โหลดกองไพ่จาก localStorage; ถ้าไม่มีให้เริ่มจาก original
-    let pairs = (()=>{
+    // โหลดกองจาก localStorage; ถ้าไม่มีให้โคลน original
+    let deck = (()=>{
       try{
         const saved = localStorage.getItem(DECK_KEY);
         if (saved) return JSON.parse(saved);
       }catch(e){}
       return JSON.parse(JSON.stringify(originalPairs));
     })();
+    function saveDeck(){ try{ localStorage.setItem(DECK_KEY, JSON.stringify(deck)); }catch(e){} }
+    function restock(groupName){ deck[groupName] = JSON.parse(JSON.stringify(originalPairs[groupName])); }
 
-    function saveDeck(){
-      try{ localStorage.setItem(DECK_KEY, JSON.stringify(pairs)); }catch(e){}
+    // หยิบ k คู่จากกลุ่มแบบ “ไม่คืน” จาก deck (ของหมดก็ restock)
+    function pickK(groupName,k){
+      if(deck[groupName].length < k) restock(groupName);
+      const chosen = sampleWithoutReplacement(deck[groupName], k);
+      // ลบออกจากเด็ค
+      chosen.forEach(pair=>{
+        const i = deck[groupName].findIndex(p => p[0]===pair[0] && p[1]===pair[1]);
+        if(i>-1) deck[groupName].splice(i,1);
+      });
+      saveDeck();
+      return chosen.map(p=>({group:groupName, pair:p}));
     }
 
-    // --- สุ่มแบบไม่ซ้ำ และบันทึกกองทุกครั้ง; รีสต็อกเฉพาะกลุ่มที่หมด
-    function pick(groupName) {
-      if (pairs[groupName].length === 0) {
-        pairs[groupName] = JSON.parse(JSON.stringify(originalPairs[groupName]));
-        console.debug(`Reset deck for ${groupName}`);
-      }
-      const idx = Math.floor(Math.random() * pairs[groupName].length);
-      const chosen = pairs[groupName].splice(idx, 1)[0];
-      saveDeck(); // สำคัญ: บันทึกกองหลังหยิบทุกครั้ง
-      return chosen;
-    }
+    // 1) สุ่ม 4 คู่ต่อกลุ่ม = 12 คู่ (ไม่ซ้ำคู่)
+    const chosen = [
+      ...pickK('LowLow',  4),
+      ...pickK('LowHigh', 4),
+      ...pickK('HighHigh',4),
+    ];
 
-    // --- สุ่ม 1 คู่จากแต่ละกลุ่ม
-    const chosen = Object.keys(pairs).map(group => ({
-      group,
-      pair: pick(group)
-    }));
+    // 2) เรียงลำดับเลี่ยง “เลขซ้ำติดกัน”
+    const pairs12 = reorderAvoidAdjacency(chosen.map(x=>x.pair));
+    const withGroup = pairs12.map(p=>{
+      const hit = chosen.find(x=>x.pair[0]===p[0] && x.pair[1]===p[1]);
+      return { pair:p, group: hit?.group };
+    });
 
-    // --- รูปแบบจอ: layout × color direction  (แก้ให้ใช้ค่าเดียวกับตอน render)
+    // 3) Latin Square 4 รูปแบบ (เหมือนเดิม)
     const styles = [
       { layout: "horizontal", colorDir: "light→dark" },
       { layout: "horizontal", colorDir: "dark→light" },
       { layout: "square",     colorDir: "light→dark" },
       { layout: "square",     colorDir: "dark→light" }
     ];
+    const lsOrder = latinSquareOrder4(12, styles);
 
-    // --- ตาราง Latin Square เดิม (ใช้จัดลำดับ style ภายในกลุ่ม)
-    const latinSquare = [
-      [0,1,2,3],
-      [1,2,3,0],
-      [2,3,0,1],
-      [3,0,1,2]
-    ];
-    const latinIdx = Math.floor(Math.random() * latinSquare.length);
-
-    // --- สร้าง trials
-    let trials = [];
-    for (let g = 0; g < chosen.length; g++) {
-      const order = latinSquare[(latinIdx + g) % latinSquare.length];
-      for (let i = 0; i < 4; i++) {
-        const style = styles[order[i]];
-        trials.push({
-          ...style,
-          ...chosen[g]
-        });
-      }
-    }
-
-    // --- กัน pair ซ้ำติดกันแบบสุ่มสลับ (ถ้าเจอ)
-    function hasAdjacentRepeat(arr) {
-      for (let i = 0; i < arr.length - 1; i++) {
-        if (JSON.stringify(arr[i].pair) === JSON.stringify(arr[i + 1].pair))
-          return true;
-      }
-      return false;
-    }
-
-    let max = 1000;
-    while (hasAdjacentRepeat(trials) && max--) {
-      for (let i = trials.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [trials[i], trials[j]] = [trials[j], trials[i]];
-      }
-    }
-
-    if (max === 0) console.warn("Reached shuffle limit; some adjacent duplicates may remain");
+    // 4) ประกอบผลลัพธ์: โครงสร้าง field เหมือนเดิมเป๊ะ
+    const trials = withGroup.map((x,i)=>({
+      ...lsOrder[i],
+      group: x.group,
+      pair:  x.pair
+    }));
 
     return trials;
   }
-
+  /* ================================================================================ */
+  // โหลด plan แล้วเรียก render
   let plan=sessionStorage.getItem(PLAN_KEY);
   if(!plan){
-    // เรียกเคลียร์คำตอบเก่าเฉพาะตอนเริ่มชุดใหม่ (ไม่กระทบการบันทึกคำตอบของรอบที่กำลังทำ)
-    if(idx === 0) clearOldResponses();
+    if(idx === 0) clearOldResponses();  // เคลียร์คำตอบเก่ารอบใหม่
     plan=JSON.stringify(buildPlan());
     sessionStorage.setItem(PLAN_KEY,plan);
   }
@@ -274,7 +301,7 @@
     const labelLayer=document.createElement('div'); labelLayer.className='labelLayer'; holder.appendChild(labelLayer);
   })();
 
-  // ------- ตำแหน่ง label + ส่งคำตอบ (คง logic เดิม) -------
+  // ------- วาง label + postAnswers (คงเดิม) -------
   const labelLayer=document.createElement('div');
 
   function resolveOverlap(aLbl,bLbl,minGap=22){
@@ -288,7 +315,6 @@
     }
   }
 
-  // fill/hide responses + postAnswers
   function setVal(inp, value){
     inp.value=String(value);
     inp.dispatchEvent(new Event('input',{bubbles:true}));
@@ -363,7 +389,7 @@
     const prefix=getIdPrefixFromUrl();
     ensureAnswersHidden(prefix, Aidx.length, Bidx.length);
 
-    // postAnswers (โครงสร้าง payload และการส่งคำตอบเหมือนเดิม)
+    // postAnswers (เหมือนเดิม)
     (function(){
       function getR(){ try{ return (window.parent && window.parent.Revisit) || window.Revisit || null; }catch(e){ return null; } }
       function fillIfPresent(pd, path, val){
@@ -408,15 +434,22 @@
 
   requestAnimationFrame(()=>{ setTimeout(place,0); });
   window.addEventListener('resize',()=>{ place(); });
-
-  // compact number inputs on sidebar if present
+  // compact number inputs on sidebar if present (คงเดิม)
   try{
     const pd=window.parent && window.parent.document;
     const SIDE_TEXT="กรอกคำตอบเป็นตัวเลขจำนวนเต็มเท่านั้น (ห้ามใส่สัญลักษณ์หรือเว้นวรรค เช่น %, , . ช่องว่าง)";
-    const aside=pd?.querySelector('aside'); const p=aside?.querySelector('p, div, span'); if(p) p.textContent=SIDE_TEXT;
+    const aside=pd?.querySelector('aside'); 
+    const p=aside?.querySelector('p, div, span'); 
+    if(p) p.textContent=SIDE_TEXT;
     if(pd && !pd.getElementById('waffle-compact-inputs')){
-      const st=pd.createElement('style'); st.id='waffle-compact-inputs';
-      st.textContent=`aside input[type="number"], aside input[data-qa="response-input-number"], aside input[type="text"]{max-width:120px !important; width:120px !important;}`;
+      const st=pd.createElement('style'); 
+      st.id='waffle-compact-inputs';
+      st.textContent=`aside input[type="number"], 
+                      aside input[data-qa="response-input-number"], 
+                      aside input[type="text"]{
+                        max-width:120px !important; 
+                        width:120px !important;
+                      }`;
       pd.head.appendChild(st);
     }
   }catch(e){}
